@@ -1,0 +1,35 @@
+services:
+  pg-service:
+    image: postgres:17.10
+    container_name: ba-test-pg
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${PG_SUPERUSER}
+      POSTGRES_PASSWORD: ${PG_SU_PASSWORD}
+      POSTGRES_DB: ${PG_DATABASE}
+
+    ports:
+      - "127.0.0.1:5432:5432"
+
+    volumes:
+      - ba-test-data:/var/lib/postgresql/data
+
+    networks:
+      - ba-test-net
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_SUPERUSER} -d ${PG_DATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  ba-test-data:
+    name: ba-test-data
+
+networks:
+  ba-test-net:
+    name: ba-test-net
+    driver: bridge
