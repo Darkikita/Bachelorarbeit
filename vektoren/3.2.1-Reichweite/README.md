@@ -2,10 +2,42 @@
 
 ## Zweck
 
-Misst, was eine kompromittierte Rolle im Grundfall aus Abschnitt 3.2.1
-erreicht (Zustand `vorher`) und was nach den vier Maßnahmen aus
-Abschnitt 4.2 davon bleibt (Zustand `nachher`). Der Angreifer besitzt
-das Credential genau einer Rolle und sonst nichts.
+Abschnitt 3.2.1 beschreibt, was ein Angreifer erreicht, der das
+Credential genau einer Rolle besitzt und sonst nichts. Der Grundfall
+ist eine Anwendungsrolle, die zugleich liest, schreibt und die Tabellen
+besitzt, dazu Rechte, die ihr über Mitgliedschaftsketten und
+PUBLIC-Voreinstellungen zufallen, ohne dass sie jemand vergeben hätte.
+Abschnitt 4.2 antwortet darauf mit vier Maßnahmen: eine Rolle je Zweck,
+Objektrechte nach Bedarf, Verwaltungsbefugnisse nur wo nötig,
+Mitgliedschaften ohne Ketten.
+
+Dieser Test misst beides. Erst, was jede Rolle im Grundfall darf
+(Zustand `vorher`), dann, was nach den Maßnahmen davon bleibt
+(Zustand `nachher`). Die Differenz ist die Wirkung der Schicht, und
+eine Zeile, die vorher wie nachher gelingt, zeigt ihre Grenze.
+
+## Vorgehen
+
+Jeder Durchlauf beginnt mit einem frischen Volume, damit keine Reste
+früherer Läufe das Ergebnis verfälschen. `rahmen.sql` legt einmal je
+Durchlauf die Ergebnistabelle und die Messfunktion an. `setup.sql`
+baut den Grundfall aus 3.2.1 absichtlich unsicher nach. `lauf.sh`
+lässt dann jede Testrolle dieselben acht Befehle aus `angriffe.sql`
+ausführen und schreibt das Ergebnis mit dem Zustand `vorher` in die
+Tabelle. Danach wendet `schicht2.sql` die vier Maßnahmen an, und
+`lauf.sh` wiederholt die acht Befehle mit dem Zustand `nachher`.
+
+Die Angriffe sind in beiden Zuständen identisch. Nur so ist die
+Differenz allein den Maßnahmen zuzuschreiben und nicht einer
+Änderung am Test. Jede Schicht wird einzeln gegen den Grundzustand
+gemessen, also vor jeder weiteren Schicht wieder mit frischem Volume
+begonnen.
+
+Die Verbindung läuft im Container über den Unix-Socket. Die Passwörter
+in `setup.sql` sind deshalb Testwerte ohne Bedeutung, weil die
+Anmeldung hier nicht geprüft wird. Für diesen Vektor ist das richtig,
+denn gemessen wird, was eine Rolle darf, nicht, ob sie sich anmelden
+kann.
 
 ## Umgebung
 
@@ -28,11 +60,17 @@ das Credential genau einer Rolle und sonst nichts.
 ## Messfunktion
 
 `pruef(nr, zustand, befehl, setrole)` läuft mit `SECURITY INVOKER`,
-also mit den Rechten der aufrufenden Rolle. Sie führt den Befehl in
-einem Ausnahmeblock aus, liest Zeilenzahl und `SQLSTATE` und erzwingt
-danach einen Rollback. Der Datenbestand bleibt dadurch über alle
-Angriffe unverändert, auch nach `DROP` und `DELETE`. Das Ergebnis wird
-außerhalb des Ausnahmeblocks in `ergebnis` geschrieben und überlebt.
+also mit den Rechten der aufrufenden Rolle. Das ist die Bedingung
+dafür, dass die Messung stimmt: Die Funktion darf nicht mehr können
+als die Rolle, die sie aufruft, sonst würde sie selbst zum
+Eskalationspfad.
+
+Sie führt den Befehl in einem Ausnahmeblock aus, liest Zeilenzahl und
+`SQLSTATE` und erzwingt danach einen Rollback. Der Datenbestand bleibt
+dadurch über alle Angriffe unverändert, auch nach `DROP` und `DELETE`,
+und alle Rollen sehen in beiden Zuständen denselben Ausgangsbestand.
+Das Ergebnis wird außerhalb des Ausnahmeblocks in `ergebnis`
+geschrieben und überlebt den Rollback.
 
 Lesart einer Zeile:
 
@@ -46,11 +84,19 @@ Lesart einer Zeile:
 
 | Rolle | LOGIN | Zustand vorher | Aufgabe im Test |
 |---|---|---|---|
-| `app_over` | ja | Eigentümer von `kunden`, `intern`, `f()` | Grundfall aus 3.2.1 |
+| `app_over` | ja | Eigentümer von `kunden`, `intern`, `f()` | Grundfall aus 3.2.1, die überprivilegierte Anwendungsrolle |
 | `app_owner` | nein | nichts | erhält in der Maßnahme das Eigentum |
 | `attacker` | ja | Mitglied `grp_mid` → `grp_mid` Mitglied `grp_read` → `SELECT` auf `intern` | gewöhnliche Rolle mit geerbter Kette |
 | `admin_cr` | ja | `CREATEROLE`, keine Objektrechte | Kontrolle, läuft nur mit |
 | `grp_read`, `grp_mid` | nein | Kette | — |
+
+`app_over` ist der Grundfall aus 3.2.1 in einer Rolle: Sie verbindet,
+liest, schreibt und besitzt. `attacker` steht für die zweite Aussage
+des Abschnitts, dass Rechte auch ohne Vergabe auf eine Rolle gelangen,
+über Mitgliedschaft und über Voreinstellungen. `admin_cr` läuft als
+Kontrolle mit, um zu zeigen, dass ein Verwaltungsattribut allein noch
+keine Objektrechte trägt. `app_owner` existiert im Grundfall nur, damit
+die Maßnahme ein Ziel für das Eigentum hat.
 
 Tabellen: `kunden` 20 Zeilen (`id`, `name`, `iban`), `intern` 10 Zeilen
 (`id`, `notiz`). Funktion `f()` gibt einen Text zurück, `EXECUTE` für
@@ -72,29 +118,58 @@ Vorher-Zustand für 3.2.2, hier ohne Wirkung.
 `A1-select` und `A4-kette` sind derselbe Befehl. Die Nummer hängt an der
 Rolle, bei `app_over` zählt A1, bei `attacker` A4.
 
+**A1.** Darf die Anwendungsrolle auf einer Tabelle alles, obwohl ihre
+Aufgabe nur einen Teil davon braucht? Vorher ja, weil sie Eigentümerin
+ist. Nachher nur noch, was `GRANT` je Operation vergibt, und `intern`
+gehört nicht dazu.
+
+**A2.** Kann ein Credential der Anwendungsrolle das Schema zerstören?
+Vorher ja, weil Eigentum das Recht zu `DROP` mitbringt und sich davon
+nicht trennen lässt. Nachher nein, weil das Eigentum bei `app_owner`
+liegt, einer Rolle ohne Anmelderecht.
+
+**A3.** Kann jede Rolle jede Funktion aufrufen, ohne dass ihr das
+jemand erlaubt hat? Vorher ja, weil PostgreSQL `EXECUTE` für `PUBLIC`
+voreinstellt. Nachher nein, nach `REVOKE ... FROM PUBLIC`.
+
+**A4.** Erreicht eine Rolle über eine Kette von Mitgliedschaften Daten,
+die ihr niemand direkt gegeben hat? Vorher ja, weil `INHERIT` die
+Rechte entlang der Kette mit der Anmeldung bereitstellt. Nachher nein,
+weil die Kette aufgelöst ist.
+
+**A5.** Bleibt der Zugriff nach der Maßnahme ausdrücklich erreichbar?
+Ja, mit `SET ROLE`. Das ist gewollt und die Grenze zu A4: `INHERIT
+FALSE` nimmt den Zugriff nicht, es macht ihn sichtbar.
+
+**N1.** Arbeitet die Anwendung nach der Maßnahme weiter? Muss vorher
+wie nachher gelingen, sonst hätte die Schicht gesperrt statt begrenzt.
+
 ## Maßnahmen (`schicht2.sql`)
 
 1. `REASSIGN OWNED BY app_over TO app_owner` — Eigentum weg von der
-   Anwendungsrolle
+   Anwendungsrolle (Absatz "Eine Rolle je Zweck")
 2. `REVOKE ALL ON ALL TABLES ... FROM app_over`, dann
    `GRANT SELECT, INSERT ON kunden TO app_over` — Rechte je Operation
+   (Absatz "Objektrechte nach Bedarf")
 3. `REVOKE EXECUTE ON FUNCTION f() FROM PUBLIC` — Voreinstellung
-   zurückgenommen
+   zurückgenommen (Absatz "Objektrechte nach Bedarf")
 4. Kette aufgelöst, `GRANT grp_read TO attacker WITH INHERIT FALSE` —
-   flach, Zugriff nur noch ausdrücklich
+   flach, Zugriff nur noch ausdrücklich (Absatz "Mitgliedschaften ohne
+   Ketten")
 
 ## Ablauf
 
 Aus `/home/nikita/docker/ba-test`:
 
 ```bash
-docker compose down -v && docker compose up -d
-# warten bis docker compose ps "healthy" zeigt
-docker compose exec -T pg-service psql -U ba_admin -d ba_test -f - < vektoren/3.2.1-Reichweite/rahmen.sql
-docker compose exec -T pg-service psql -U ba_admin -d ba_test -f - < vektoren/3.2.1-Reichweite/setup.sql
-vektoren/3.2.1-Reichweite/lauf.sh vorher
-docker compose exec -T pg-service psql -U ba_admin -d ba_test -f - < vektoren/3.2.1-Reichweite/schicht2.sql
-vektoren/3.2.1-Reichweite/lauf.sh nachher
+V=vektoren/3.2.1-Reichweite
+
+docker compose down -v && docker compose up -d --wait
+docker compose exec -T pg-service psql -U ba_admin -d ba_test -f - < $V/rahmen.sql
+docker compose exec -T pg-service psql -U ba_admin -d ba_test -f - < $V/setup.sql
+$V/lauf.sh vorher
+docker compose exec -T pg-service psql -U ba_admin -d ba_test -f - < $V/schicht2.sql
+$V/lauf.sh nachher
 ```
 
 Rohausgabe (48 Zeilen):
@@ -145,11 +220,23 @@ Durchlauf am 16.09.2026. Alle 48 Zeilen entsprechen der Erwartung.
 - A3: `EXECUTE` für `PUBLIC` reicht vorher für jede Rolle, auch für die
   Kontrollrolle
 
+## Folge für den Text
+
+Die vier Maßnahmen aus 4.2 wirken je einzeln nachweisbar auf den
+Grundfall aus 3.2.1, und der Nutzfall bleibt erhalten. Die Matrix geht
+als `doku/ergebnismatrix-3.2.1.tex` in `sec:ergebnismatrix`. A5 belegt
+den Satz in 4.2, dass `INHERIT FALSE` die Rechte erst nach `SET ROLE`
+bereitstellt und ein kompromittiertes Credential sie nicht mit sich
+trägt, solange der Angreifer die Gruppe nicht kennt. `admin_cr` stützt
+die Trennung der Ebenen in 3.2.1.
+
 ## Nicht getestet
 
 - Verwaltungsbefugnisse aus 4.2 (Superuser `NOLOGIN`, `set_user`,
   `pg_monitor`): nur im Text beschrieben
 - `ALTER DEFAULT PRIVILEGES`: nicht in den Szenarien
+- Der zweite Weg aus 3.2.2 (`CREATEROLE`, `ADMIN OPTION`): `admin_cr`
+  legt hier keine Rollen an, das gehört zu 3.2.2
 
 ## Hinweise
 
