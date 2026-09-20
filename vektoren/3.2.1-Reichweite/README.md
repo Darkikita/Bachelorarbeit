@@ -188,7 +188,7 @@ docker compose exec -T pg-service psql -U ba_admin -d ba_test \
         max(CASE WHEN zustand = 'vorher'  THEN CASE WHEN sqlstate = '00000' THEN zeilen::text ELSE sqlstate END END) AS vorher,
         max(CASE WHEN zustand = 'nachher' THEN CASE WHEN sqlstate = '00000' THEN zeilen::text ELSE sqlstate END END) AS nachher
       FROM ergebnis GROUP BY nr, rolle ORDER BY nr, rolle;" \
-  > doku/ergebnismatrix-3.2.1.tex
+  > vektoren/3.2.1-Reichweite/ergebnismatrix-3.2.1.tex
 ```
 
 ## Erwartung und Ergebnis

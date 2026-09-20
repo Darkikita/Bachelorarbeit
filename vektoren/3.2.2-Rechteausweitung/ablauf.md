@@ -149,25 +149,48 @@ docker compose exec -T pg-service psql -U app      -d ba_test -f - < $V/n1-nutzf
 **E1 Hijack** — erwartet: `ok` (fester Suchpfad schließt Weg 1)
 
 ```
-[Ergebnis eintragen]
+nikita@nikitaserver:~/docker/ba-test$ docker compose exec -T pg-service psql -U attacker -d ba_test -f - < $V/e1-hijack.sql
+## E1  search_path-Hijack, Weg 1  (als attacker)
+CREATE FUNCTION
+ pruef_zugriff 
+---------------
+ ok
+(1 row)
 ```
 
 **E2 CREATEROLE** — erwartet: weiter `CREATE ROLE`, `GRANT ROLE`, Grenze `42501` (Schicht 3 greift hier nicht)
 
 ```
-[Ergebnis eintragen]
+nikita@nikitaserver:~/docker/ba-test$ docker compose exec -T pg-service psql -U creator  -d ba_test -f - < $V/e2-createrole.sql
+## E2  CREATEROLE, Weg 2a  (als creator)
+CREATE ROLE
+GRANT ROLE
+-- Grenze (vgl. T3): Serverrolle ohne ADMIN-Option nicht erreichbar
+psql:<stdin>:6: ERROR:  permission denied to grant role "pg_read_server_files"
+DETAIL:  Only roles with the ADMIN option on role "pg_read_server_files" may grant this role.
 ```
 
 **E3 ADMIN-Option** — erwartet: weiter `GRANT ROLE`, `geheim_zeilen = 1`
 
 ```
-[Ergebnis eintragen]
+nikita@nikitaserver:~/docker/ba-test$ docker compose exec -T pg-service psql -U attacker -d ba_test -f - < $V/e3-adminoption.sql
+## E3  ADMIN-Option, Weg 2b  (als attacker)
+GRANT ROLE
+ geheim_zeilen 
+---------------
+             1
+(1 row)
 ```
 
 **N1 Nutzfall** — erwartet: `ok`
 
 ```
-[Ergebnis eintragen]
+nikita@nikitaserver:~/docker/ba-test$ docker compose exec -T pg-service psql -U app      -d ba_test -f - < $V/n1-nutzfall.sql
+## N1  Nutzfall  (als app)
+ pruef_zugriff 
+---------------
+ ok
+(1 row)
 ```
 
 ---

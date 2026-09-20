@@ -3,6 +3,9 @@ services:
     image: postgres:17.10
     container_name: ba-test-pg
     restart: unless-stopped
+    # wal_level=logical wird fuer die logische Replikation (Vektor 3.2.3) gebraucht
+    command: ["postgres", "-c", "wal_level=logical"]
+
 
     environment:
       POSTGRES_USER: ${PG_SUPERUSER}
